@@ -1,37 +1,17 @@
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { MapPin, Star, Users, Shield, Sparkles, Heart, Leaf, Palette, MessageCircle } from "lucide-react";
-
-interface Spot {
-  id: string;
-  name: string;
-  description: string;
-  story: string;
-  vibe: "romantic" | "serene" | "creative";
-  ratings: {
-    uniqueness: number;
-    vibe: number;
-    safety: number;
-    crowdLevel: number;
-  };
-  location: {
-    lat: number;
-    lng: number;
-    address: string;
-  };
-  images: string[];
-  author: string;
-  experiences: number;
-  createdAt: string;
-}
+import { MapPin, Star, Users, Shield, Sparkles, Heart, Leaf, Palette, MessageCircle, Navigation } from "lucide-react";
+import { Spot } from "@/types/spot";
+import { locationService } from "@/services/locationService";
 
 interface SpotCardProps {
   spot: Spot;
   onClick: () => void;
+  userLocation?: { lat: number; lng: number } | null;
 }
 
-const SpotCard = ({ spot, onClick }: SpotCardProps) => {
+const SpotCard = ({ spot, onClick, userLocation }: SpotCardProps) => {
   const vibeIcons = {
     romantic: Heart,
     serene: Leaf,
@@ -46,6 +26,10 @@ const SpotCard = ({ spot, onClick }: SpotCardProps) => {
 
   const VibeIcon = vibeIcons[spot.vibe];
   const averageRating = (spot.ratings.uniqueness + spot.ratings.vibe + spot.ratings.safety) / 3;
+  
+  const distance = userLocation 
+    ? locationService.calculateDistance(userLocation, spot.location)
+    : null;
 
   return (
     <Card 
@@ -59,6 +43,7 @@ const SpotCard = ({ spot, onClick }: SpotCardProps) => {
           className="w-full h-full object-cover group-hover:scale-105 md:group-hover:scale-110 transition-transform duration-500"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+        
         <div className="absolute top-2 md:top-3 left-2 md:left-3">
           <Badge className={`${vibeColors[spot.vibe]} font-medium text-xs`}>
             <VibeIcon className="w-3 h-3 mr-1" />
@@ -66,10 +51,21 @@ const SpotCard = ({ spot, onClick }: SpotCardProps) => {
             <span className="sm:hidden">{spot.vibe.charAt(0).toUpperCase()}</span>
           </Badge>
         </div>
+        
         <div className="absolute top-2 md:top-3 right-2 md:right-3 flex items-center gap-1 bg-white/90 rounded-full px-2 py-1">
           <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
           <span className="text-xs font-medium">{averageRating.toFixed(1)}</span>
         </div>
+        
+        {distance && (
+          <div className="absolute top-8 md:top-9 right-2 md:right-3 bg-blue-500/90 text-white rounded-full px-2 py-1 flex items-center gap-1">
+            <Navigation className="w-3 h-3" />
+            <span className="text-xs font-medium">
+              {distance < 1 ? `${Math.round(distance * 1000)}m` : `${distance.toFixed(1)}km`}
+            </span>
+          </div>
+        )}
+        
         <div className="absolute bottom-2 md:bottom-3 left-2 md:left-3 right-2 md:right-3">
           <h3 className="text-white font-bold text-sm md:text-lg mb-1 line-clamp-1">{spot.name}</h3>
           <div className="flex items-center text-white/80 text-xs md:text-sm">
@@ -95,7 +91,7 @@ const SpotCard = ({ spot, onClick }: SpotCardProps) => {
               </div>
               <div className="w-full bg-gray-200 rounded-full h-1">
                 <div 
-                  className="bg-amber-500 h-1 rounded-full" 
+                  className="bg-amber-500 h-1 rounded-full transition-all duration-500" 
                   style={{ width: `${(spot.ratings.uniqueness / 5) * 100}%` }}
                 />
               </div>
@@ -111,7 +107,7 @@ const SpotCard = ({ spot, onClick }: SpotCardProps) => {
               </div>
               <div className="w-full bg-gray-200 rounded-full h-1">
                 <div 
-                  className="bg-green-500 h-1 rounded-full" 
+                  className="bg-green-500 h-1 rounded-full transition-all duration-500" 
                   style={{ width: `${(spot.ratings.safety / 5) * 100}%` }}
                 />
               </div>

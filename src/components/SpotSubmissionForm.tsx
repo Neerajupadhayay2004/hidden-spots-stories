@@ -6,27 +6,32 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { X, Upload, MapPin, Heart, Leaf, Palette, Camera, Trash2, Eye } from "lucide-react";
+import { X, Upload, MapPin, Heart, Leaf, Palette, Camera, Trash2, Navigation, Target } from "lucide-react";
+import { locationService } from "@/services/locationService";
+import { SpotFormData } from "@/types/spot";
 
 interface SpotSubmissionFormProps {
   onClose: () => void;
   onSubmit: (spot: any) => void;
+  userLocation?: { lat: number; lng: number } | null;
 }
 
-const SpotSubmissionForm = ({ onClose, onSubmit }: SpotSubmissionFormProps) => {
-  const [formData, setFormData] = useState({
+const SpotSubmissionForm = ({ onClose, onSubmit, userLocation }: SpotSubmissionFormProps) => {
+  const [formData, setFormData] = useState<SpotFormData>({
     name: "",
     description: "",
     story: "",
     vibe: "",
     address: "",
     author: "",
-    images: [] as string[],
+    images: [],
   });
 
   const [uploadedImages, setUploadedImages] = useState<File[]>([]);
   const [imagePreviewUrls, setImagePreviewUrls] = useState<string[]>([]);
   const [dragActive, setDragActive] = useState(false);
+  const [isGettingLocation, setIsGettingLocation] = useState(false);
+  const [selectedLocation, setSelectedLocation] = useState<{ lat: number; lng: number } | null>(null);
 
   const vibeOptions = [
     { value: "romantic", label: "Romantic", icon: Heart, color: "text-pink-600" },
@@ -53,12 +58,17 @@ const SpotSubmissionForm = ({ onClose, onSubmit }: SpotSubmissionFormProps) => {
 
     setUploadedImages(prev => [...prev, ...validFiles]);
     setImagePreviewUrls(prev => [...prev, ...newUrls]);
+    setFormData(prev => ({ ...prev, images: [...prev.images, ...newUrls] }));
   };
 
   const removeImage = (index: number) => {
     URL.revokeObjectURL(imagePreviewUrls[index]);
     setUploadedImages(prev => prev.filter((_, i) => i !== index));
     setImagePreviewUrls(prev => prev.filter((_, i) => i !== index));
+    setFormData(prev => ({
+      ...prev,
+      images: prev.images.filter((_, i) => i !== index)
+    }));
   };
 
   const handleDrag = (e: React.DragEvent) => {
@@ -78,11 +88,41 @@ const SpotSubmissionForm = ({ onClose, onSubmit }: SpotSubmissionFormProps) => {
     handleFileChange(e.dataTransfer.files);
   };
 
+  const getCurrentLocation = async () => {
+    setIsGettingLocation(true);
+    try {
+      const location = await locationService.getCurrentLocation();
+      setSelectedLocation(location);
+      const address = await locationService.reverseGeocode(location);
+      setFormData(prev => ({ ...prev, address }));
+    } catch (error) {
+      console.error('Error getting location:', error);
+      alert('Could not get your location. Please enter address manually.');
+    } finally {
+      setIsGettingLocation(false);
+    }
+  };
+
+  const useMyLocation = () => {
+    if (userLocation) {
+      setSelectedLocation(userLocation);
+      locationService.reverseGeocode(userLocation).then(address => {
+        setFormData(prev => ({ ...prev, address }));
+      });
+    } else {
+      getCurrentLocation();
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
+    const finalLocation = selectedLocation || userLocation || {
+      lat: 26.2183 + (Math.random() - 0.5) * 0.02,
+      lng: 78.1828 + (Math.random() - 0.5) * 0.02,
+    };
+
     const newSpot = {
-      id: Date.now().toString(),
       ...formData,
       ratings: {
         uniqueness: 4,
@@ -91,15 +131,12 @@ const SpotSubmissionForm = ({ onClose, onSubmit }: SpotSubmissionFormProps) => {
         crowdLevel: 2,
       },
       location: {
-        lat: 26.2183 + (Math.random() - 0.5) * 0.02,
-        lng: 78.1828 + (Math.random() - 0.5) * 0.02,
-        address: formData.address,
+        ...finalLocation,
+        address: formData.address || `${finalLocation.lat.toFixed(4)}, ${finalLocation.lng.toFixed(4)}, Gwalior, MP`,
       },
       images: imagePreviewUrls.length > 0 ? imagePreviewUrls : [
         "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&h=600&fit=crop"
       ],
-      experiences: 0,
-      createdAt: new Date().toISOString(),
     };
 
     onSubmit(newSpot);
@@ -107,7 +144,7 @@ const SpotSubmissionForm = ({ onClose, onSubmit }: SpotSubmissionFormProps) => {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <Card className="w-full max-w-2xl max-h-[95vh] overflow-y-auto">
+      <Card className="w-full max-w-3xl max-h-[95vh] overflow-y-auto">
         <CardHeader className="flex flex-row items-center justify-between pb-4">
           <CardTitle className="text-xl md:text-2xl">Share a Hidden Spot</CardTitle>
           <Button variant="ghost" size="sm" onClick={onClose}>
@@ -132,17 +169,37 @@ const SpotSubmissionForm = ({ onClose, onSubmit }: SpotSubmissionFormProps) => {
 
               <div className="md:col-span-2">
                 <Label htmlFor="address">Address/Location *</Label>
-                <div className="relative">
-                  <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                  <Input
-                    id="address"
-                    value={formData.address}
-                    onChange={(e) => setFormData(prev => ({ ...prev, address: e.target.value }))}
-                    placeholder="Enter the location in Gwalior"
-                    className="pl-10"
-                    required
-                  />
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                    <Input
+                      id="address"
+                      value={formData.address}
+                      onChange={(e) => setFormData(prev => ({ ...prev, address: e.target.value }))}
+                      placeholder="Enter the location in Gwalior"
+                      className="pl-10"
+                      required
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={useMyLocation}
+                    disabled={isGettingLocation}
+                    className="shrink-0"
+                  >
+                    {isGettingLocation ? (
+                      <Target className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Navigation className="w-4 h-4" />
+                    )}
+                  </Button>
                 </div>
+                {selectedLocation && (
+                  <p className="text-xs text-green-600 mt-1">
+                    📍 Location captured: {selectedLocation.lat.toFixed(6)}, {selectedLocation.lng.toFixed(6)}
+                  </p>
+                )}
               </div>
 
               <div className="md:col-span-1">
@@ -243,7 +300,7 @@ const SpotSubmissionForm = ({ onClose, onSubmit }: SpotSubmissionFormProps) => {
                 id="description"
                 value={formData.description}
                 onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                placeholder="Describe this place in a few words..."
+                placeholder="Describe this place in a few words - what makes it special?"
                 rows={3}
                 required
               />
@@ -256,8 +313,8 @@ const SpotSubmissionForm = ({ onClose, onSubmit }: SpotSubmissionFormProps) => {
                 id="story"
                 value={formData.story}
                 onChange={(e) => setFormData(prev => ({ ...prev, story: e.target.value }))}
-                placeholder="Share your experience... What makes this place special? What happened here? Why should others visit?"
-                rows={4}
+                placeholder="Share your experience... What makes this place special? What happened here? Why should others visit? Tell us the story behind your discovery."
+                rows={5}
                 required
               />
             </div>
