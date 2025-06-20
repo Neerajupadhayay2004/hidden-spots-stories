@@ -1,8 +1,11 @@
 
 import { useState, useEffect, useRef } from 'react';
+import mapboxgl from 'mapbox-gl';
+import 'mapbox-gl/dist/mapbox-gl.css';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { MapPin, Navigation, Layers, Heart, Leaf, Palette, Maximize2, Minimize2, RotateCcw } from 'lucide-react';
+import { Input } from "@/components/ui/input";
+import { MapPin, Navigation, Layers, Heart, Leaf, Palette, Maximize2, Minimize2, RotateCcw, AlertCircle } from 'lucide-react';
 import { Spot } from '@/types/spot';
 import { locationService, LocationCoordinates } from '@/services/locationService';
 
@@ -13,14 +16,17 @@ interface InteractiveMapProps {
 }
 
 const InteractiveMap = ({ spots, onSpotSelect, selectedSpot }: InteractiveMapProps) => {
+  const mapContainer = useRef<HTMLDivElement>(null);
+  const map = useRef<mapboxgl.Map | null>(null);
   const [userLocation, setUserLocation] = useState<LocationCoordinates | null>(null);
-  const [mapCenter, setMapCenter] = useState<LocationCoordinates>({ lat: 26.2183, lng: 78.1828 });
   const [selectedFilter, setSelectedFilter] = useState<string>('all');
   const [isLocationLoading, setIsLocationLoading] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [mapZoom, setMapZoom] = useState(1);
   const [hoveredSpot, setHoveredSpot] = useState<string | null>(null);
-  const mapRef = useRef<HTMLDivElement>(null);
+  const [mapboxToken, setMapboxToken] = useState('');
+  const [showTokenInput, setShowTokenInput] = useState(false);
+  const [locationPermissionDenied, setLocationPermissionDenied] = useState(false);
+  const markersRef = useRef<{ [key: string]: mapboxgl.Marker }>({});
 
   const vibeIcons = {
     romantic: Heart,
@@ -29,66 +35,252 @@ const InteractiveMap = ({ spots, onSpotSelect, selectedSpot }: InteractiveMapPro
   };
 
   const vibeColors = {
-    romantic: "bg-gradient-to-br from-pink-400 to-pink-600 border-pink-300 shadow-pink-200",
-    serene: "bg-gradient-to-br from-green-400 to-green-600 border-green-300 shadow-green-200",
-    creative: "bg-gradient-to-br from-purple-400 to-purple-600 border-purple-300 shadow-purple-200",
-  };
-
-  const vibeGlow = {
-    romantic: "shadow-lg shadow-pink-300/50",
-    serene: "shadow-lg shadow-green-300/50",
-    creative: "shadow-lg shadow-purple-300/50",
+    romantic: "#ec4899",
+    serene: "#10b981", 
+    creative: "#8b5cf6",
   };
 
   useEffect(() => {
+    if (!mapboxToken) {
+      setShowTokenInput(true);
+      return;
+    }
+    
+    initializeMap();
     getUserLocation();
-  }, []);
+  }, [mapboxToken]);
+
+  useEffect(() => {
+    if (map.current && spots.length > 0) {
+      updateMarkers();
+    }
+  }, [spots, selectedFilter]);
+
+  const initializeMap = () => {
+    if (!mapContainer.current) return;
+
+    mapboxgl.accessToken = mapboxToken;
+    
+    map.current = new mapboxgl.Map({
+      container: mapContainer.current,
+      style: 'mapbox://styles/mapbox/streets-v12',
+      center: [78.1828, 26.2183], // Gwalior coordinates
+      zoom: 12,
+      pitch: 0,
+      bearing: 0
+    });
+
+    // Add navigation controls
+    map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+
+    // Add scale control
+    map.current.addControl(new mapboxgl.ScaleControl(), 'bottom-left');
+
+    map.current.on('load', () => {
+      updateMarkers();
+    });
+  };
 
   const getUserLocation = async () => {
     setIsLocationLoading(true);
+    setLocationPermissionDenied(false);
+    
     try {
       const location = await locationService.getCurrentLocation();
       setUserLocation(location);
-      const gwaliורCenter = { lat: 26.2183, lng: 78.1828 };
-      const distance = locationService.calculateDistance(location, gwaliורCenter);
-      if (distance < 50) {
-        setMapCenter(location);
+      
+      if (map.current) {
+        // Add user location marker
+        const userMarker = new mapboxgl.Marker({
+          color: '#3b82f6',
+          scale: 1.2
+        })
+          .setLngLat([location.lng, location.lat])
+          .setPopup(
+            new mapboxgl.Popup({ offset: 25 })
+              .setHTML('<div class="text-center p-2"><strong>Your Location</strong></div>')
+          )
+          .addTo(map.current);
+
+        // Center map on user location if they're in Gwalior area
+        const gwaliOrCenter = { lat: 26.2183, lng: 78.1828 };
+        const distance = locationService.calculateDistance(location, gwaliOrCenter);
+        
+        if (distance < 50) {
+          map.current.flyTo({
+            center: [location.lng, location.lat],
+            zoom: 14,
+            duration: 2000
+          });
+        }
       }
     } catch (error) {
       console.error('Could not get user location:', error);
+      setLocationPermissionDenied(true);
     } finally {
       setIsLocationLoading(false);
     }
   };
 
-  const filteredSpots = selectedFilter === 'all' 
-    ? spots 
-    : spots.filter(spot => spot.vibe === selectedFilter);
+  const updateMarkers = () => {
+    if (!map.current) return;
 
-  const getSpotDistance = (spot: Spot): string => {
-    if (!userLocation) return '';
-    const distance = locationService.calculateDistance(userLocation, spot.location);
-    return distance < 1 ? `${Math.round(distance * 1000)}m` : `${distance.toFixed(1)}km`;
+    // Clear existing markers
+    Object.values(markersRef.current).forEach(marker => marker.remove());
+    markersRef.current = {};
+
+    const filteredSpots = selectedFilter === 'all' 
+      ? spots 
+      : spots.filter(spot => spot.vibe === selectedFilter);
+
+    filteredSpots.forEach((spot) => {
+      // Create custom marker element
+      const el = document.createElement('div');
+      el.className = 'custom-marker';
+      el.style.backgroundImage = `linear-gradient(135deg, ${vibeColors[spot.vibe]}, ${vibeColors[spot.vibe]}dd)`;
+      el.style.width = '30px';
+      el.style.height = '30px';
+      el.style.borderRadius = '50%';
+      el.style.border = '3px solid white';
+      el.style.boxShadow = '0 4px 10px rgba(0,0,0,0.3)';
+      el.style.cursor = 'pointer';
+      el.style.display = 'flex';
+      el.style.alignItems = 'center';
+      el.style.justifyContent = 'center';
+      el.style.color = 'white';
+      el.style.fontSize = '14px';
+      el.style.fontWeight = 'bold';
+      el.style.transition = 'all 0.3s ease';
+
+      // Add vibe icon
+      const VibeIcon = vibeIcons[spot.vibe];
+      el.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        ${spot.vibe === 'romantic' ? '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>' : 
+          spot.vibe === 'serene' ? '<path d="M11 6.5a.5.5 0 0 1 .5-.5.5.5 0 0 1 .5.5v3.5a.5.5 0 0 1-.5.5.5.5 0 0 1-.5-.5z"/><path d="M15.5 8a.5.5 0 0 1 .5-.5.5.5 0 0 1 .5.5v5a.5.5 0 0 1-.5.5.5.5 0 0 1-.5-.5z"/>' :
+          '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>'
+        }
+      </svg>`;
+
+      // Hover effects
+      el.addEventListener('mouseenter', () => {
+        el.style.transform = 'scale(1.2)';
+        el.style.zIndex = '1000';
+        setHoveredSpot(spot.id);
+      });
+
+      el.addEventListener('mouseleave', () => {
+        el.style.transform = 'scale(1)';
+        el.style.zIndex = '1';
+        setHoveredSpot(null);
+      });
+
+      el.addEventListener('click', () => {
+        onSpotSelect(spot);
+      });
+
+      // Create popup content
+      const averageRating = ((spot.ratings.uniqueness + spot.ratings.vibe + spot.ratings.safety) / 3).toFixed(1);
+      const distance = userLocation ? locationService.calculateDistance(userLocation, spot.location) : null;
+      
+      const popupContent = `
+        <div class="p-3 min-w-[200px]">
+          <h3 class="font-bold text-lg mb-2">${spot.name}</h3>
+          <p class="text-sm text-gray-600 mb-2">${spot.description}</p>
+          <div class="flex items-center gap-2 mb-2">
+            <div class="flex">
+              ${[1,2,3,4,5].map(i => `
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="${i <= Math.round(parseFloat(averageRating)) ? '#fbbf24' : '#e5e7eb'}" class="mr-1">
+                  <polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/>
+                </svg>
+              `).join('')}
+            </div>
+            <span class="text-sm text-gray-600">${averageRating}</span>
+          </div>
+          ${distance ? `<p class="text-sm text-blue-600">${distance < 1 ? `${Math.round(distance * 1000)}m` : `${distance.toFixed(1)}km`} away</p>` : ''}
+        </div>
+      `;
+
+      const popup = new mapboxgl.Popup({ 
+        offset: 25,
+        closeButton: false,
+        closeOnClick: false
+      }).setHTML(popupContent);
+
+      const marker = new mapboxgl.Marker(el)
+        .setLngLat([spot.location.lng, spot.location.lat])
+        .setPopup(popup)
+        .addTo(map.current!);
+
+      markersRef.current[spot.id] = marker;
+
+      // Show popup on hover
+      el.addEventListener('mouseenter', () => {
+        popup.addTo(map.current!);
+      });
+
+      el.addEventListener('mouseleave', () => {
+        popup.remove();
+      });
+
+      // Highlight selected spot
+      if (selectedSpot?.id === spot.id) {
+        el.style.transform = 'scale(1.4)';
+        el.style.zIndex = '1000';
+        popup.addTo(map.current!);
+      }
+    });
   };
 
   const resetMapView = () => {
-    setMapCenter({ lat: 26.2183, lng: 78.1828 });
-    setMapZoom(1);
+    if (map.current) {
+      map.current.flyTo({
+        center: [78.1828, 26.2183],
+        zoom: 12,
+        duration: 1000
+      });
+    }
   };
 
-  const zoomIn = () => setMapZoom(prev => Math.min(prev + 0.2, 2));
-  const zoomOut = () => setMapZoom(prev => Math.max(prev - 0.2, 0.5));
+  if (showTokenInput) {
+    return (
+      <Card className={`w-full ${isFullscreen ? 'fixed inset-4 z-50' : 'h-[500px]'} relative overflow-hidden`}>
+        <CardContent className="p-8 flex flex-col items-center justify-center h-full">
+          <MapPin className="w-16 h-16 text-gray-400 mb-4" />
+          <h3 className="text-xl font-semibold mb-4">Setup Mapbox</h3>
+          <p className="text-gray-600 mb-6 text-center max-w-md">
+            To display the interactive map, please enter your Mapbox public token. 
+            You can get one free at <a href="https://mapbox.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">mapbox.com</a>
+          </p>
+          <div className="w-full max-w-md space-y-4">
+            <Input
+              type="text"
+              placeholder="Enter your Mapbox public token"
+              value={mapboxToken}
+              onChange={(e) => setMapboxToken(e.target.value)}
+            />
+            <Button 
+              onClick={() => setShowTokenInput(false)}
+              disabled={!mapboxToken}
+              className="w-full"
+            >
+              Initialize Map
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
-    <Card className={`w-full ${isFullscreen ? 'fixed inset-4 z-50' : 'h-[500px]'} relative overflow-hidden shadow-2xl border-0 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50`}>
-      {/* Enhanced Control Panel */}
+    <Card className={`w-full ${isFullscreen ? 'fixed inset-4 z-50' : 'h-[500px]'} relative overflow-hidden shadow-2xl`}>
+      {/* Control Panel */}
       <div className="absolute top-4 left-4 z-20 flex flex-col gap-3">
         <div className="flex gap-2">
           <Button
             variant={selectedFilter === 'all' ? 'default' : 'outline'}
             size="sm"
             onClick={() => setSelectedFilter('all')}
-            className="bg-white/95 backdrop-blur-md shadow-lg border-white/20 hover:bg-white hover:scale-105 transition-all duration-200"
+            className="bg-white/95 backdrop-blur-md shadow-lg"
           >
             <Layers className="w-4 h-4 mr-1" />
             All
@@ -99,9 +291,7 @@ const InteractiveMap = ({ spots, onSpotSelect, selectedSpot }: InteractiveMapPro
               variant={selectedFilter === vibe ? 'default' : 'outline'}
               size="sm"
               onClick={() => setSelectedFilter(vibe)}
-              className={`bg-white/95 backdrop-blur-md shadow-lg border-white/20 hover:scale-105 transition-all duration-200 ${
-                selectedFilter === vibe ? vibeColors[vibe as keyof typeof vibeColors] + ' text-white' : 'hover:bg-white'
-              }`}
+              className="bg-white/95 backdrop-blur-md shadow-lg"
             >
               <Icon className="w-4 h-4 mr-1" />
               <span className="hidden sm:inline">{vibe.charAt(0).toUpperCase() + vibe.slice(1)}</span>
@@ -110,14 +300,14 @@ const InteractiveMap = ({ spots, onSpotSelect, selectedSpot }: InteractiveMapPro
         </div>
       </div>
 
-      {/* Enhanced Right Controls */}
+      {/* Right Controls */}
       <div className="absolute top-4 right-4 z-20 flex flex-col gap-2">
         <Button
           variant="outline"
           size="sm"
           onClick={getUserLocation}
           disabled={isLocationLoading}
-          className="bg-white/95 backdrop-blur-md shadow-lg border-white/20 hover:bg-white hover:scale-105 transition-all duration-200"
+          className="bg-white/95 backdrop-blur-md shadow-lg"
         >
           <Navigation className={`w-4 h-4 mr-1 ${isLocationLoading ? 'animate-spin' : ''}`} />
           {isLocationLoading ? 'Finding...' : 'My Location'}
@@ -127,7 +317,7 @@ const InteractiveMap = ({ spots, onSpotSelect, selectedSpot }: InteractiveMapPro
           variant="outline"
           size="sm"
           onClick={() => setIsFullscreen(!isFullscreen)}
-          className="bg-white/95 backdrop-blur-md shadow-lg border-white/20 hover:bg-white hover:scale-105 transition-all duration-200"
+          className="bg-white/95 backdrop-blur-md shadow-lg"
         >
           {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
         </Button>
@@ -136,196 +326,40 @@ const InteractiveMap = ({ spots, onSpotSelect, selectedSpot }: InteractiveMapPro
           variant="outline"
           size="sm"
           onClick={resetMapView}
-          className="bg-white/95 backdrop-blur-md shadow-lg border-white/20 hover:bg-white hover:scale-105 transition-all duration-200"
+          className="bg-white/95 backdrop-blur-md shadow-lg"
         >
           <RotateCcw className="w-4 h-4" />
         </Button>
       </div>
 
-      {/* Zoom Controls */}
-      <div className="absolute bottom-20 right-4 z-20 flex flex-col gap-1">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={zoomIn}
-          className="bg-white/95 backdrop-blur-md shadow-lg border-white/20 hover:bg-white hover:scale-105 transition-all duration-200 w-10 h-10 p-0"
-        >
-          +
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={zoomOut}
-          className="bg-white/95 backdrop-blur-md shadow-lg border-white/20 hover:bg-white hover:scale-105 transition-all duration-200 w-10 h-10 p-0"
-        >
-          −
-        </Button>
-      </div>
-
-      {/* Enhanced Map Background with Animation */}
-      <div 
-        ref={mapRef}
-        className="w-full h-full relative overflow-hidden"
-        style={{
-          background: `
-            radial-gradient(circle at 20% 20%, rgba(120, 119, 198, 0.1) 0%, transparent 50%),
-            radial-gradient(circle at 80% 80%, rgba(255, 119, 198, 0.1) 0%, transparent 50%),
-            linear-gradient(135deg, #667eea 0%, #764ba2 100%)
-          `,
-          transform: `scale(${mapZoom})`,
-          transformOrigin: 'center',
-          transition: 'transform 0.3s ease-out',
-        }}
-      >
-        {/* Animated Grid Pattern */}
-        <div 
-          className="absolute inset-0 opacity-10"
-          style={{
-            backgroundImage: `
-              linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)
-            `,
-            backgroundSize: '40px 40px',
-            animation: 'float 20s ease-in-out infinite',
-          }}
-        />
-
-        {/* Gwalior City Area Outline */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="relative w-full max-w-2xl h-full max-h-2xl">
-            
-            {/* User Location with Enhanced Animation */}
-            {userLocation && (
-              <div 
-                className="absolute z-10"
-                style={{
-                  left: `${((userLocation.lng - 78.15) / 0.08) * 100}%`,
-                  top: `${((26.25 - userLocation.lat) / 0.08) * 100}%`,
-                  transform: 'translate(-50%, -50%)',
-                }}
-              >
-                <div className="relative">
-                  <div className="w-6 h-6 bg-blue-500 rounded-full border-3 border-white shadow-xl animate-pulse">
-                    <div className="absolute inset-0 bg-blue-400 rounded-full animate-ping opacity-75"></div>
-                    <div className="absolute inset-1 bg-blue-600 rounded-full"></div>
-                  </div>
-                  <div className="absolute -inset-4 bg-blue-500/20 rounded-full animate-pulse"></div>
-                </div>
-              </div>
-            )}
-
-            {/* Enhanced Spot Markers */}
-            {filteredSpots.map((spot) => {
-              const VibeIcon = vibeIcons[spot.vibe];
-              const isSelected = selectedSpot?.id === spot.id;
-              const isHovered = hoveredSpot === spot.id;
-              const distance = getSpotDistance(spot);
-              
-              return (
-                <div
-                  key={spot.id}
-                  className={`absolute cursor-pointer transform -translate-x-1/2 -translate-y-1/2 transition-all duration-500 z-15 ${
-                    isSelected ? 'scale-125 z-20' : isHovered ? 'scale-110 z-15' : 'hover:scale-110'
-                  }`}
-                  style={{
-                    left: `${((spot.location.lng - 78.15) / 0.08) * 100}%`,
-                    top: `${((26.25 - spot.location.lat) / 0.08) * 100}%`,
-                  }}
-                  onClick={() => onSpotSelect(spot)}
-                  onMouseEnter={() => setHoveredSpot(spot.id)}
-                  onMouseLeave={() => setHoveredSpot(null)}
-                >
-                  <div className={`relative ${isSelected ? 'animate-bounce' : ''}`}>
-                    {/* Enhanced Marker with Glow */}
-                    <div className={`w-12 h-12 rounded-full border-3 border-white flex items-center justify-center ${vibeColors[spot.vibe]} ${vibeGlow[spot.vibe]} transition-all duration-300`}>
-                      <VibeIcon className="w-6 h-6 text-white drop-shadow-sm" />
-                    </div>
-                    
-                    {/* Enhanced Tooltip */}
-                    {(isSelected || isHovered) && (
-                      <div className="absolute -top-16 left-1/2 transform -translate-x-1/2 bg-white/95 backdrop-blur-md rounded-xl shadow-2xl p-3 min-w-max animate-fade-in border border-white/20">
-                        <p className="text-sm font-bold text-gray-800 mb-1">{spot.name}</p>
-                        {distance && (
-                          <p className="text-xs text-blue-600 font-medium">{distance} away</p>
-                        )}
-                        <div className="flex items-center gap-1 mt-1">
-                          <div className="flex">
-                            {[...Array(5)].map((_, i) => (
-                              <div
-                                key={i}
-                                className={`w-2 h-2 rounded-full ${
-                                  i < Math.round((spot.ratings.uniqueness + spot.ratings.vibe + spot.ratings.safety) / 3)
-                                    ? 'bg-yellow-400'
-                                    : 'bg-gray-200'
-                                }`}
-                              />
-                            ))}
-                          </div>
-                          <span className="text-xs text-gray-600 ml-1">
-                            {((spot.ratings.uniqueness + spot.ratings.vibe + spot.ratings.safety) / 3).toFixed(1)}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Animated Ripples for Selected Spot */}
-                    {isSelected && (
-                      <>
-                        <div className="absolute inset-0 rounded-full border-2 border-current animate-ping opacity-75"></div>
-                        <div className="absolute -inset-2 rounded-full border border-current animate-ping opacity-50 animation-delay-300"></div>
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+      {/* Location Permission Alert */}
+      {locationPermissionDenied && (
+        <div className="absolute top-20 left-4 right-4 z-20 bg-yellow-50 border border-yellow-200 rounded-lg p-3 flex items-start gap-2">
+          <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+          <div className="text-sm">
+            <p className="font-medium text-yellow-800">Location access denied</p>
+            <p className="text-yellow-700">Please allow location access to see your position on the map and get directions to spots.</p>
           </div>
         </div>
-
-        {/* Enhanced Legend */}
-        <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-md rounded-xl shadow-2xl p-4 text-sm border border-white/20">
-          <h4 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
-            <MapPin className="w-4 h-4 text-gray-600" />
-            Legend
-          </h4>
-          <div className="space-y-2">
-            {Object.entries(vibeIcons).map(([vibe, Icon]) => (
-              <div key={vibe} className="flex items-center gap-3">
-                <div className={`w-6 h-6 rounded-full border-2 border-white flex items-center justify-center ${vibeColors[vibe as keyof typeof vibeColors]} shadow-sm`}>
-                  <Icon className="w-3 h-3 text-white" />
-                </div>
-                <span className="text-gray-700 font-medium capitalize">{vibe} Spots</span>
-              </div>
-            ))}
-            {userLocation && (
-              <div className="flex items-center gap-3 pt-2 border-t border-gray-200">
-                <div className="w-6 h-6 bg-blue-500 rounded-full border-2 border-white shadow-sm relative">
-                  <div className="absolute inset-1 bg-blue-600 rounded-full"></div>
-                </div>
-                <span className="text-gray-700 font-medium">Your Location</span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Enhanced Spot Count with Animation */}
-        <div className="absolute bottom-4 right-4 bg-white/95 backdrop-blur-md rounded-xl shadow-2xl p-4 text-sm border border-white/20">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-gradient-to-br from-amber-400 to-orange-500 rounded-full flex items-center justify-center">
-              <span className="text-white font-bold text-xs">{filteredSpots.length}</span>
-            </div>
-            <div>
-              <p className="text-gray-800 font-bold">Hidden Spots</p>
-              <p className="text-gray-600 text-xs">Discovered in Gwalior</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Fullscreen Overlay */}
-      {isFullscreen && (
-        <div className="absolute inset-0 bg-black/20 backdrop-blur-sm pointer-events-none" />
       )}
+
+      {/* Map Container */}
+      <div ref={mapContainer} className="w-full h-full" />
+
+      {/* Spot Count */}
+      <div className="absolute bottom-4 right-4 bg-white/95 backdrop-blur-md rounded-xl shadow-xl p-4 text-sm">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 bg-gradient-to-br from-amber-400 to-orange-500 rounded-full flex items-center justify-center">
+            <span className="text-white font-bold text-xs">
+              {selectedFilter === 'all' ? spots.length : spots.filter(s => s.vibe === selectedFilter).length}
+            </span>
+          </div>
+          <div>
+            <p className="text-gray-800 font-bold">Hidden Spots</p>
+            <p className="text-gray-600 text-xs">In Gwalior</p>
+          </div>
+        </div>
+      </div>
     </Card>
   );
 };
