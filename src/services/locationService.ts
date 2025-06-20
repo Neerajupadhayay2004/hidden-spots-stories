@@ -15,22 +15,12 @@ export interface LocationInfo {
 class LocationService {
   private watchId: number | null = null;
 
-  // Get user's current location with permission handling
+  // Get user's current location
   async getCurrentLocation(): Promise<LocationCoordinates> {
     return new Promise((resolve, reject) => {
       if (!navigator.geolocation) {
         reject(new Error('Geolocation is not supported by this browser'));
         return;
-      }
-
-      // First check if permission is already granted
-      if ('permissions' in navigator) {
-        navigator.permissions.query({ name: 'geolocation' }).then((result) => {
-          if (result.state === 'denied') {
-            reject(new Error('Location permission denied. Please enable location access in your browser settings.'));
-            return;
-          }
-        });
       }
 
       navigator.geolocation.getCurrentPosition(
@@ -41,43 +31,15 @@ class LocationService {
           });
         },
         (error) => {
-          let errorMessage = 'Unable to get your location. ';
-          
-          switch (error.code) {
-            case error.PERMISSION_DENIED:
-              errorMessage += 'Location access was denied. Please allow location access and try again.';
-              break;
-            case error.POSITION_UNAVAILABLE:
-              errorMessage += 'Location information is unavailable.';
-              break;
-            case error.TIMEOUT:
-              errorMessage += 'Location request timed out. Please try again.';
-              break;
-            default:
-              errorMessage += 'An unknown error occurred.';
-              break;
-          }
-          
-          reject(new Error(errorMessage));
+          reject(new Error(`Location error: ${error.message}`));
         },
         {
           enableHighAccuracy: true,
-          timeout: 15000,
+          timeout: 10000,
           maximumAge: 60000,
         }
       );
     });
-  }
-
-  // Request location permission
-  async requestLocationPermission(): Promise<boolean> {
-    try {
-      const position = await this.getCurrentLocation();
-      return true;
-    } catch (error) {
-      console.error('Location permission denied:', error);
-      return false;
-    }
   }
 
   // Calculate distance between two points (in km)
@@ -126,24 +88,6 @@ class LocationService {
       navigator.geolocation.clearWatch(this.watchId);
       this.watchId = null;
     }
-  }
-
-  // Check if location services are available
-  isLocationAvailable(): boolean {
-    return 'geolocation' in navigator;
-  }
-
-  // Get location permission status
-  async getLocationPermissionStatus(): Promise<string> {
-    if ('permissions' in navigator) {
-      try {
-        const result = await navigator.permissions.query({ name: 'geolocation' });
-        return result.state; // 'granted', 'denied', or 'prompt'
-      } catch (error) {
-        return 'unknown';
-      }
-    }
-    return 'unknown';
   }
 
   // Reverse geocoding (get address from coordinates)
